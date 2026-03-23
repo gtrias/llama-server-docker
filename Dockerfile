@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     jq \
     python3 \
     python3-pip \
-    && pip3 install --break-system-packages huggingface-hub \
+    && pip3 install huggingface-hub \
     && rm -rf /var/lib/apt/lists/*
 
 # Create directories for models and cache

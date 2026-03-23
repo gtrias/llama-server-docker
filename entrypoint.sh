@@ -70,6 +70,12 @@ if [ "$AUTO_DOWNLOAD" = "true" ] && [ -f /scripts/auto-download.sh ]; then
     log_info ""
 fi
 
+# Strip auto-download keys from preset before passing to llama-server
+# (llama-server doesn't understand hf-repo, hf-file, mmproj-hf-file)
+CLEAN_PRESET="/tmp/models-clean.ini"
+sed '/^[[:space:]]*hf-repo[[:space:]]*=/d;/^[[:space:]]*hf-file[[:space:]]*=/d;/^[[:space:]]*mmproj-hf-file[[:space:]]*=/d' "$MODELS_PRESET" > "$CLEAN_PRESET"
+MODELS_PRESET="$CLEAN_PRESET"
+
 # Build llama-server command with preset file
 CMD="/app/llama-server"
 TIMEOUT=${LLAMA_ARG_TIMEOUT:-"120"}

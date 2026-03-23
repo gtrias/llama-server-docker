@@ -75,7 +75,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 2
-      start_period: 60s
+      start_period: 600s
 
     # Logging configuration
     logging:

@@ -2,8 +2,6 @@
 # Auto-download missing models from HuggingFace
 # Parses models.ini for hf-repo and hf-file fields
 
-set -e
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -59,19 +57,22 @@ for section in "${!model_path[@]}"; do
     file="${hf_file[$section]:-}"
     path="${model_path[$section]}"
 
-    [ -z "$repo" ] || [ -z "$file" ] && continue
+    # Skip if no download info
+    if [ -z "$repo" ] || [ -z "$file" ]; then
+        continue
+    fi
 
     if [ -f "$path" ]; then
         log_info "✓ $section: already present"
-        ((skip_count++))
+        skip_count=$((skip_count + 1))
     else
         log_info "⬇ $section: downloading $repo/$file ..."
-        if huggingface-cli download "$repo" "$file" --local-dir "$CACHE_DIR" --local-dir-use-symlinks False 2>&1; then
+        if python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download('$repo', '$file', local_dir='$CACHE_DIR')" 2>&1; then
             log_info "✓ $section: downloaded successfully"
-            ((download_count++))
+            download_count=$((download_count + 1))
         else
             log_error "✗ $section: download failed"
-            ((fail_count++))
+            fail_count=$((fail_count + 1))
         fi
     fi
 
@@ -80,12 +81,12 @@ for section in "${!model_path[@]}"; do
     mmproj_file="${mmproj_hf_file[$section]:-}"
     if [ -n "$mmproj" ] && [ -n "$mmproj_file" ] && [ ! -f "$mmproj" ]; then
         log_info "⬇ $section mmproj: downloading $repo/$mmproj_file ..."
-        if huggingface-cli download "$repo" "$mmproj_file" --local-dir "$CACHE_DIR" --local-dir-use-symlinks False 2>&1; then
+        if python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download('$repo', '$mmproj_file', local_dir='$CACHE_DIR')" 2>&1; then
             log_info "✓ $section mmproj: downloaded successfully"
-            ((download_count++))
+            download_count=$((download_count + 1))
         else
             log_error "✗ $section mmproj: download failed"
-            ((fail_count++))
+            fail_count=$((fail_count + 1))
         fi
     fi
 done
