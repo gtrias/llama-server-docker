@@ -1,0 +1,84 @@
+version: '3.8'
+
+networks:
+  llama-server:
+    external: false
+  proxy:
+    external: true
+
+volumes:
+  models:
+    driver: local
+
+services:
+  llama-server:
+    build: .
+    image: llama-server:latest
+    container_name: llama-server
+    restart: unless-stopped
+
+    # GPU configuration
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Environment variables
+    environment:
+      # Server settings
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8080
+      - LLAMA_ARG_JINJA=true
+
+      # Router mode - use curated preset file (no filesystem auto-discovery)
+      - LLAMA_ARG_MODELS_PRESET=/config/models.ini
+      - LLAMA_ARG_MODELS_MAX=1
+      - LLAMA_ARG_MODELS_AUTOLOAD=true
+
+      # Performance settings (default, can be overridden per-model in models.ini)
+      - LLAMA_ARG_N_GPU_LAYERS=-1
+      - LLAMA_ARG_FLASH_ATTN=on
+      - LLAMA_ARG_PARALLEL=2
+      - LLAMA_ARG_KV_UNIFIED=1
+
+    ports:
+      - "11434:8080"  # Keep your existing port 11434
+
+    volumes:
+      - models:/models
+      - ${MODELS_PATH:-~/.cache/llama.cpp}:/root/.cache/llama.cpp:ro  # Mount local model cache (read-only)
+      - ./config:/config:ro  # models.ini (must be /config for llama.cpp)
+      - ./logs:/app/logs
+      - ./scripts:/scripts:ro  # healthcheck script
+
+    networks:
+      - llama-server
+      - proxy
+
+    # Traefik labels for reverse proxy (adjust for your domain)
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.llama-server.rule=Host(`${TRAEFIK_HOST:-llama.localhost}`)"
+      - "traefik.http.routers.llama-server.tls=true"
+      - "traefik.http.routers.llama-server.tls.certresolver=default"
+      - "traefik.http.routers.llama-server.middlewares=llama-auth"
+      - "traefik.http.services.llama-server.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.llama-auth.basicauth.users=${TRAEFIK_BASICAUTH:-}"
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "bash", "/scripts/healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 2
+      start_period: 60s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

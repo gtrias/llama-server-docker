@@ -1,0 +1,13 @@
+# Environment (personal config)
+.env
+
+# Model files (users download their own)
+*.gguf
+
+# Runtime artifacts
+logs/
+.cache/
+scripts/.model_last_used/
+
+# Pi agent config
+.pi/
