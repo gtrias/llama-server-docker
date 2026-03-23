@@ -37,6 +37,7 @@ services:
       - LLAMA_ARG_MODELS_PRESET=/config/models.ini
       - LLAMA_ARG_MODELS_MAX=1
       - LLAMA_ARG_MODELS_AUTOLOAD=true
+      - LLAMA_AUTO_DOWNLOAD=true          # Auto-download missing models on startup
 
       # Performance settings (default, can be overridden per-model in models.ini)
       - LLAMA_ARG_N_GPU_LAYERS=-1
@@ -49,7 +50,7 @@ services:
 
     volumes:
       - models:/models
-      - ${MODELS_PATH:-~/.cache/llama.cpp}:/root/.cache/llama.cpp:ro  # Mount local model cache (read-only)
+      - ${MODELS_PATH:-~/.cache/llama.cpp}:/root/.cache/llama.cpp  # Mount local model cache (writable for auto-download)
       - ./config:/config:ro  # models.ini (must be /config for llama.cpp)
       - ./logs:/app/logs
       - ./scripts:/scripts:ro  # healthcheck script

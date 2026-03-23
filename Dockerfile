@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y \
     curl \
     wget \
     jq \
+    python3 \
+    python3-pip \
+    && pip3 install --break-system-packages huggingface-hub \
     && rm -rf /var/lib/apt/lists/*
 
 # Create directories for models and cache
@@ -20,6 +23,7 @@ WORKDIR /app
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 COPY config/ /app/config/
+COPY scripts/ /app/scripts/
 
 # Set environment variables
 ENV LLAMA_ARG_HOST=0.0.0.0

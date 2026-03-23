@@ -62,6 +62,14 @@ if [ -n "$MODELS_DIR" ]; then
     log_info "Found $MODEL_COUNT GGUF model file(s) in discovery directory"
 fi
 
+# Auto-download missing models
+AUTO_DOWNLOAD=${LLAMA_AUTO_DOWNLOAD:-"true"}
+if [ "$AUTO_DOWNLOAD" = "true" ] && [ -f /scripts/auto-download.sh ]; then
+    log_info "Checking for missing models..."
+    bash /scripts/auto-download.sh "$MODELS_PRESET" "/root/.cache/llama.cpp"
+    log_info ""
+fi
+
 # Build llama-server command with preset file
 CMD="/app/llama-server"
 TIMEOUT=${LLAMA_ARG_TIMEOUT:-"120"}
