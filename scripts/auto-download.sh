@@ -80,8 +80,18 @@ for section in "${!model_path[@]}"; do
     mmproj="${mmproj_path[$section]:-}"
     mmproj_file="${mmproj_hf_file[$section]:-}"
     if [ -n "$mmproj" ] && [ -n "$mmproj_file" ] && [ ! -f "$mmproj" ]; then
-        log_info "⬇ $section mmproj: downloading $repo/$mmproj_file ..."
+        # The mmproj filename in HF repo may differ from the local path
+        # (e.g., repo has "mmproj-BF16.gguf" but preset expects "mmproj-35b-BF16.gguf")
+        # Download to a temp name, then rename to the expected path
+        mmproj_basename=$(basename "$mmproj")
+        hf_downloaded="$CACHE_DIR/$mmproj_file"
+        log_info "⬇ $section mmproj: downloading $repo/$mmproj_file → $mmproj_basename ..."
         if python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download('$repo', '$mmproj_file', local_dir='$CACHE_DIR')" 2>&1; then
+            # Rename if HF filename differs from expected path
+            if [ "$hf_downloaded" != "$mmproj" ] && [ -f "$hf_downloaded" ]; then
+                mv "$hf_downloaded" "$mmproj"
+                log_info "  renamed $mmproj_file → $mmproj_basename"
+            fi
             log_info "✓ $section mmproj: downloaded successfully"
             download_count=$((download_count + 1))
         else
