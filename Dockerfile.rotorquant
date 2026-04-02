@@ -1,0 +1,81 @@
+# Dockerfile for llama.cpp server with RotorQuant KV cache compression
+# Based on johndpope/llama-cpp-turboquant fork (feature/planarquant-kv-cache)
+# 
+# Benefits vs upstream:
+# - planar3/f16: +5% decode, +10% prefill, 5.1x K-cache compression, zero PPL loss
+# - planar3/planar3: 10.3x KV compression, ~4-6% PPL hit
+#
+# Build: docker build -f Dockerfile.rotorquant -t llama-server:rotorquant .
+
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone the RotorQuant fork
+WORKDIR /build
+RUN git clone --depth 1 -b feature/planarquant-kv-cache \
+    https://github.com/johndpope/llama-cpp-turboquant.git llama.cpp
+
+# Build with CUDA support
+WORKDIR /build/llama.cpp
+RUN cmake -B build \
+    -DGGML_CUDA=ON \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_ARCHITECTURES="86" \
+    && cmake --build build -j$(nproc) --target llama-server llama-cli
+
+# Runtime image
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    jq \
+    python3 \
+    python3-pip \
+    libgomp1 \
+    && pip3 install huggingface-hub \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy built binaries and libraries
+COPY --from=builder /build/llama.cpp/build/bin/llama-server /usr/local/bin/
+COPY --from=builder /build/llama.cpp/build/bin/llama-cli /usr/local/bin/
+COPY --from=builder /build/llama.cpp/build/bin/*.so* /usr/local/lib/ 2>/dev/null || true
+COPY --from=builder /build/llama.cpp/build/ggml/src/*.so* /usr/local/lib/ 2>/dev/null || true
+COPY --from=builder /build/llama.cpp/build/src/*.so* /usr/local/lib/ 2>/dev/null || true
+
+# Update library cache
+RUN ldconfig
+
+# Create directories
+RUN mkdir -p /models /cache /app
+
+WORKDIR /app
+
+# Copy entrypoint and configs
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+COPY config/ /app/config/
+COPY scripts/ /app/scripts/
+
+# Set environment variables
+ENV LLAMA_ARG_HOST=0.0.0.0
+ENV LLAMA_ARG_PORT=8080
+ENV LLAMA_ARG_JINJA=true
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD []
