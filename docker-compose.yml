@@ -12,8 +12,7 @@ volumes:
 
 services:
   llama-server:
-    build: .
-    image: llama-server:latest
+    image: llama-server:${IMAGE_TAG:-standard}
     container_name: llama-server
     restart: unless-stopped
 
