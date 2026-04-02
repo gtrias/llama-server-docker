@@ -6,6 +6,7 @@
 
 # Runtime artifacts
 logs/
+rotorquant-bin/
 .cache/
 scripts/.model_last_used/
 
