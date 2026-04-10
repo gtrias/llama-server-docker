@@ -1,0 +1,472 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Minimal Voxel World</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; color: white; font-family: sans-serif; user-select: none; }
+        canvas { display: block; cursor: crosshair; }
+        
+        /* UI Overlay */
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.6);
+            padding: 15px;
+            border-radius: 8px;
+            pointer-events: none; /* Let clicks pass through */
+        }
+        
+        h1 { margin: 0; font-size: 16px; color: #4ade80; text-transform: uppercase; letter-spacing: 2px; }
+        p { margin: 5px 0; font-size: 12px; line-height: 1.4; opacity: 0.8; }
+        
+        .key {
+            display: inline-block;
+            background: #333;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+            font-weight: bold;
+            color: #fff;
+            margin-right: 4px;
+        }
+
+        /* Block Selector Indicators */
+        .selector {
+            display: inline-block;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            margin-left: 5px;
+            vertical-align: middle;
+            opacity: 0.3;
+            transition: all 0.2s;
+        }
+        
+        .active {
+            transform: scale(1.4);
+            box-shadow: 0 0 8px currentColor;
+            opacity: 1;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <h1>Voxel World v1.0</h1>
+        <p><span class="key">WASD</span> Move &nbsp;|&nbsp; <span class="key">Mouse</span> Look (Click to Lock)</p>
+        <p><span class="key">L-Click</span> Break Block &nbsp;|&nbsp; <span class="key">R-Click</span> Place Block</p>
+        <div id="block-selector">
+            <!-- Populated by JS -->
+             1: Grass (Green) 
+             | Dirt (Brown)
+             | Stone (Grey)
+             | Wood (Orange)
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.170.0/build/three.module.js';
+
+        // --- Configuration ---
+        const CHUNK_SIZE = 32;
+        const BLOCK_SIZE = 1; // Voxel size
+        const PLAYER_HEIGHT = 2.5;
+        
+        // Block Types: { color, name }
+        const TYPES = [
+            { id: 3, color: new THREE.Color(0xffaa00), name: 'Wood' },    // Orange-ish Wood (Index 1)
+            { id: 4, color: new THREE.Color(0x880000), name: 'Stone' },     // Dark Red Stone
+        ];
+        
+        let activeType = TYPES[3]; 
+
+        // --- Simple Noise Implementation ---
+        // A simple pseudo-random number generator and value noise function
+        class SimpleNoise {
+            constructor() { this.perm = new Uint8Array(512); for(let i=0; i<256; ++i) this.perm[i] = i; 
+                for(let i=255; i>0; --i){ let r = Math.floor(Math.random() * (i+1)); [this.perm[i], this.perm[r]] = [this.perm[r], this.perm[i]]; }
+                for(let i=256; i<512; ++i) this.perm[i] = this.perm[i-256]; 
+            }
+
+            fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+            lerp(a, b, t) { return a + t * (b - a); } // Simplified linear interp for value noise
+
+            grad(hash, x, y) {
+                const h = hash & 3;
+                const u = h < 2 ? x : y;
+                const v = h < 2 ? y : x;
+                return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+            }
+
+            noise(x, y) {
+                // Determine grid cell coordinates
+                let X = Math.floor(x) & 255;
+                let Y = Math.floor(y) & 255;
+
+                // Find relative values of x,y to the edge of the unit square (independent coordinate)
+                const xf = x - Math.floor(x);
+                const yf = y - Math.floor(y);
+
+                // Smooth curve interpolation
+                const u = this.fade(xf);
+                const v = this.fade(yf); // Note: usually fade is applied after gradient, simplified here
+
+                // Hash coordinates of the 4 corners (using our pre-calculated perm)
+                let n00 = this.grad(this.perm[this.perm[X] + Y], xf, yf);
+                
+                return n00; 
+            }
+
+            get(x, z) {
+                // Scale noise to make it look like terrain
+                const scale = 0.05;
+                return (this.noise(x * scale, z * scale) + this.noise((x+10)*scale, (z+20)*scale)) / 2; 
+                
+            }
+        }
+
+        const worldNoise = new SimpleNoise();
+
+        // --- Three.js Setup ---
+        const scene = new THREE.Scene();
+        
+        // Fog for depth
+        scene.fog = 0.02;
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); 
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(50, 100, 50);
+        scene.add(dirLight);
+
+
+        // --- World Generation ---
+        
+        // Geometry reuse
+        const boxGeo = new THREE.BoxGeometry(BLOCK_SIZE * 2 - 0.02, BLOCK_SIZE * 4 + 0.1, BLOCK_SIZE * 2 - 0.02); 
+        
+        // Materials cache to save memory and improve performance (instanced rendering is better but complex for single file)
+        const materials = {
+            grass: new THREE.MeshLambertMaterial({ color: TYPES[0].color }),
+            dirt: new THREE.MeshStandardMaterial({ color: TYPES[1].color }), 
+            stone: new THREE.MeshStandardMaterial({ color: TYPES[2].color }),
+             wood: new THREE.MeshStandardMaterial({ color: activeType.color })
+        };
+
+        // We use a Map to store block data "x,z" -> type
+        const worldData = new Map(); 
+
+        function createBlock(x, z) {
+            if (worldData.has(`${x},${z}`)) return; // Already exists
+
+            let y;
+            
+            // Procedural Terrain Logic based on Noise + simple math for hills
+            // Base height 0.5 to keep player above ground slightly
+            
+            const n = worldNoise.get(x, z);
+             if (n > -1) {
+                // Hill logic: Higher noise value -> higher block
+                 y = Math.max(4 * n, 2); 
+                 
+                // Add some randomness so it's not perfectly smooth hills
+                y += Math.sin(x/5 + z/3)*0.8;
+            } else {
+               if (Math.random() > 0.9) {y=1;} else {return; }
+            }
+
+            const mat = materials.grass;
+
+            // Create Mesh
+            const mesh = new THREE.Mesh(boxGeo, mat);
+            
+            // Center the box on its coordinate center for easier raycasting logic later?
+            // Actually standard is bottom-left-back corner. 
+            // Let's set position to x * size.
+            mesh.position.set(x * BLOCK_SIZE - CHUNK_SIZE/2*BLOCK_SIZE + 0.5, y / 4, z * BLOCK_SIZE - CHUNK_SIZE/2*BLOCK_SIZE + 0.5);
+            
+            scene.add(mesh);
+
+            worldData.set(`${x},${z}`, { 
+                type: 'grass', // Default
+                mesh: mesh,
+                heightY: y / 4
+            });
+        }
+
+        function rebuildTerrain() {
+             for (let x = -CHUNK_SIZE/2; x < CHUNK_SIZE/2; ++x) {
+                 for(let z=-CHUNK_SIZE/2; z< CHUNK_SIZE/2; ++z){
+                     createBlock(x, z);
+                 }
+             }
+        }
+
+        // Initialize World
+        rebuildTerrain();
+
+        
+        // --- Player & Physics ---
+        
+        const player = new THREE.Group();
+        scene.add(player);
+
+        // Camera container (moves with physics)
+        camera.position.set(0, PLAYER_HEIGHT - 1.5, CHUNK_SIZE/2 * BLOCK_SIZE); 
+        // Note: We will move the group 'player' and keep camera attached to it.
+        
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+
+        // Physics constants
+        const speed = 10;
+        const gravity = -30; // Gravity strength (negative Y)
+        const jumpForce = 15;
+
+        let canJump = false;
+        
+        // Raycaster for interactions
+        const raycaster = new THREE.Raycaster();
+        raycaster.far = CHUNK_SIZE * BLOCK_SIZE + 5; 
+
+        // Input State
+        const keys = { w: false, a: false, s: false, d: false };
+        let yaw = -Math.PI / 2;
+        
+        document.addEventListener('keydown', (e) => {
+            if(e.key === '1') selectType(0);
+            if(e.key === '2') selectType(1); // Dirt
+            if(e.key === '3') selectType(2); // Stone
+            if(e.key === '4') selectType(3); // Wood (Active)
+        });
+
+        function selectType(index) {
+             activeType = TYPES[index];
+             
+             // Update UI indicators logic would go here, simplified:
+             const uiDiv = document.getElementById('block-selector');
+             let html = '';
+             for(let i=0; i<TYPES.length; i++) {
+                 const isActive = (i === index);
+                 html += `<span class="selector ${isActive ? 'active' : ''}" style="background-color: #${TYPES[i].color.getHexString()}"></span> `;
+             }
+             document.getElementById('block-selector').innerHTML = "Select Block:<br>" + html;
+        }
+
+        // --- Interaction Logic ---
+
+        function getRayIntersection() {
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            
+            const intersects = [];
+            scene.traverse((object) => { if (object.isMesh && object !== player.children[1]) intersects.push(object); });
+            
+            return raycaster.intersectObjects(intersects);
+        }
+
+        // Left Click: Break Block
+        document.addEventListener('mousedown', (e) => {
+            if (!document.pointerLockElement || e.button === 0) { 
+                const hits = getRayIntersection();
+                
+                for(let hit of hits) {
+                    // Find the data associated with this mesh in our worldData map?
+                    // Since we didn't store a reference, let's iterate or find by position
+                    // Better: Iterate all blocks and check distance? Slow.
+                    
+                    // Optimization: We can try to match based on grid coordinates if stored. 
+                    // Let's assume the user clicked near center of block for simplicity in this minimal version,
+                    // OR we just traverse worldData again (32x32 = 1024 checks, fast enough).
+                    
+                    const pos = hit.object.position;
+                    // Convert position back to integer coords
+                    const gx = Math.round(pos.x / BLOCK_SIZE);
+                    const gz = Math.round(pos.z / BLOCK_SIZE);
+
+                    if(worldData.has(`${gx},${gz}`)) {
+                        scene.remove(hit.object); // Remove mesh
+                        
+                        worldData.delete(`${gx},${gz}`);
+                        
+                        // Optional: Spawn particles or sound here
+                            break; 
+                    }
+                }
+            }
+        });
+
+        // Right Click: Place Block (Raycast down)
+        document.addEventListener('mousedown', (e) => {
+             if (!document.pointerLockElement || e.button === 2) { 
+                 raycaster.setFromCamera(new THREE.Vector2(0, -1), camera); // Look straight down
+                 
+                 const hits = getRayIntersection();
+                 for(let hit of hits){
+                     if(hit.object !== player.children[1]) {
+                         // Place block at the point below feet?
+                         // Or just place it where clicked? 
+                         
+                         // Simple logic: If we click a face, snap to grid.
+                         // For this minimal version, let's assume clicking "on ground" places there.
+                         const pos = hit.point;
+                         if(pos.y < PLAYER_HEIGHT) {
+                             createBlock(Math.round((pos.x + CHUNK_SIZE/2*BLOCK_SIZE)/BLOCK_SIZE), Math.round((pos.z+CHUNK_SIZE/2*BLOCK_SIZE)/BLOCK_SIZE));
+                         }
+                     } else { // Place on feet
+                        const pos = player.position.clone();
+                        pos.y -= 0.1;
+                        createBlock(Math.round(pos.x/BLOCK_SIZE + CHUNK_SIZE/2), Math.round(pos.z/BLOCK_SIZE + CHUNK_SIZE/2));
+                     }
+                 }
+             }
+
+        });
+
+        
+        // --- Game Loop ---
+        
+        document.body.addEventListener('click', () => {
+            renderer.domElement.requestPointerLock();
+        });
+    
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (document.pointerLockElement) {
+                const delta = clock.getDelta(); // Time since last frame
+
+                // 1. Physics: Gravity
+                velocity.y += gravity * delta;
+                
+                // Calculate forward/right vectors based on camera rotation
+                direction.z = Number(keys.w || keys.s);
+                direction.x = Number(keys.d || keys.a);
+
+                if (keys.w) { yaw -= speed * delta; } 
+                else if (keys.s) { yaw += speed * delta; }
+                
+                const moveVec = new THREE.Vector3();
+                // Move forward/back
+                if(direction.z !== 0) {
+                    moveVec.x -= Math.sin(yaw) * direction.z;
+                    moveVec.z -= Math.cos(yaw) * direction.z;
+                    
+                    velocity.add(moveVec.multiplyScalar(delta));
+                }
+
+                const sideVec = new THREE.Vector3();
+                 // Strafe left/right
+                if(direction.x !== 0) {
+                     sideVec.x += -Math.sin(-yaw + (direction.x > 0 ? Math.PI/2 : -Math.PI/2)) * direction.z; 
+                     // Simplified strafe:
+                    moveVec.y = Number(keys.a || keys.d);
+                    
+                    velocity.add(new THREE.Vector3(
+                        -(keys.s?1:0) * speed, 
+                         (keys.w?-speed:speed), 
+                        0
+                    ).multiplyScalar(delta));
+                }
+
+                
+                // Apply Velocity to Position Group
+                
+                const nextPos = player.position.clone().add(velocity.multiplyScalar(delta));
+
+                // Collision Detection with World Blocks
+                let grounded = false;
+                
+                // Check X/Z movement first (Horizontal)
+                 if(nextPos.x !== 0 || nextPos.z !== 0) {
+                     for(let x=-CHUNK_SIZE/2; x< CHUNK_SIZE/2; ++x){
+                         for(let z= -CHUNK_SIZE/2; z < CHUNK_SIZE/2; ++z){
+                             const key = `${x},${z}`;
+                             if(worldData.has(key)){
+                                 // Simple AABB check
+                                 const blockPos = worldData.get(key).mesh.position;
+                                 
+                                 // Check X collision (keep Z same)
+                                 let hitX = false;
+                                 let hitZ = false;
+
+                                 if(nextPos.x > blockPos.x - 0.5 && nextPos.z >= blockPos.z - 1 &&
+                                    nextPos.x < blockPos.x + 2 && nextPos.z <= blockPos.z + 3) {
+                                     // Rough collision
+                                      velocity.set(0,velocity.y,0);
+                                 }
+                             }
+                         }
+                     }
+                 }
+
+                player.position.add(new THREE.Vector3(
+                    (keys.w?-1: keys.s?1 : 0),
+                    -Math.sin(yaw)*speed*delta,
+                    -(keys.d ? Math.cos(-yaw) * speed * delta : 0)
+                ));
+
+
+                // Check Y collision (Vertical / Grounding)
+                 const feetPos = player.position.clone();
+                 feetPos.y -= PLAYER_HEIGHT; 
+                 
+                 let hitBlockBelow = null;
+                 for(let x=-CHUNK_SIZE/2; x< CHUNK_SIZE/2; ++x){
+                     for(let z= -CHUNK_SIZE/2; z < CHUNK_SIZE/2; ++z){
+                         const key = `${x},${z}`;
+                         if(worldData.has(key)){
+                             const data = worldData.get(key);
+                             
+                             // Simple box check around feet
+                             if(feetPos.x > (data.mesh.position.x-0.5) && 
+                                feetPos.z >= (data.mesh.position.z - 1 + BLOCK_SIZE/2) &&
+                                feetPos.x < (data.mesh.position.x+BLOCK_SIZE*3) &&
+                                feetPos.z <= data.mesh.position.z+(BLOCK_SIZE)) {
+                                 // Collision
+                                 if(data.heightY > player.position.y || !grounded && velocity.y >=0){
+                                     grounded = true;
+                                     hitBlockBelow = data; 
+                                      break; // Found ground, stop checking this frame for Y (simplified)
+                                 }
+                             }
+                         }
+                     }if(hitBlockBelow) break;
+                 }
+
+                if(grounded) {
+                    canJump = true;
+                    velocity.y = 0;
+
+                    // Snap to surface
+                    const targetY = hitBlockBelow.heightY + PLAYER_HEIGHT - BLOCK_SIZE; 
+                    
+                    // Smoothly move up/down? For voxel, snap is better.
+                     player.position.y += (targetY - player.position.y) * 10 * delta;
+                } else {
+                    canJump = false;
+                 }
+
+            }
+            
+            renderer.render(scene, camera);
+        };
+
+        animate();
+
+    </script>
+</body>
+</html>

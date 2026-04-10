@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel World</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: sans-serif; }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%;
+            width: 20px; height: 20px;
+            border: 2px solid white;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #ui {
+            position: absolute; bottom: 20px; left: 20px;
+            color: white; background: rgba(0,0,0,0.5);
+            padding: 10px; border-radius: 5px;
+        }
+        #instructions {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: white; text-align: center;
+            background: rgba(0,0,0,0.7); padding: 20px;
+            border-radius: 10px; cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="crosshair"></div>
+    <div id="ui">Block: <span id="blockName">Grass</span> (1-4)</div>
+    <div id="instructions"><h1>Click to Play</h1><p>WASD: Move | Space: Jump<br>Left Click: Break | Right Click: Place</p></div>
+
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.170.0/build/three.module.js';
+        import { PointerLockControls } from 'https://unpkg.com/three@0.170.0/examples/jsm/controls/PointerLockControls.js';
+
+        // --- Configuration ---
+        const CHUNK_SIZE = 32;
+        const BLOCK_SIZE = 1;
+        const PLAYER_SPEED = 0.1;
+        const JUMP_FORCE = 0.15;
+        const GRAVITY = 0.008;
+
+        const BLOCK_TYPES = {
+            1: { name: 'Grass', color: 0x567d46 },
+            2: { name: 'Dirt', color: 0x8b4513 },
+            3: { name: 'Stone', color: 0x808080 },
+            4: { name: 'Wood', color: 0x5d4037 }
+        };
+
+        let activeBlock = 1;
+        const worldBlocks = new Map();
+
+        // --- Setup Scene ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        sunLight.position.set(10, 20, 10);
+        scene.add(sunLight);
+
+        const controls = new PointerLockControls(camera, document.body);
+        const instructions = document.getElementById('instructions');
+        instructions.addEventListener('click', () => controls.lock());
+        controls.addEventListener('lock', () => instructions.style.display = 'none');
+        controls.addEventListener('unlock', () => instructions.style.display = 'block');
+
+        // --- Simple Noise ---
+        function noise(x, z) {
+            return Math.sin(x * 0.2) * Math.cos(z * 0.2) * 2 + Math.sin(x * 0.1) * 3;
+        }
+
+        // --- Voxel Logic ---
+        const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+        
+        function addBlock(x, y, z, type) {
+            const material = new THREE.MeshLambertMaterial({ color: BLOCK_TYPES[type].color });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, z);
+            mesh.userData = { type };
+            scene.add(mesh);
+            worldBlocks.set(`${x},${y},${z}`, mesh);
+        }
+
+        // Generate Terrain
+        for (let x = 0; x < CHUNK_SIZE; x++) {
+            for (let z = 0; z < CHUNK_SIZE; z++) {
+                const height = Math.floor(noise(x, z)) + 5;
+                for (let y = 0; y <= height; y++) {
+                    let type = 3; // Stone
+                    if (y === height) type = 1; // Grass
+                    else if (y > height - 3) type = 2; // Dirt
+                    addBlock(x, y, z, type);
+                }
+            }
+        }
+
+        camera.position.set(CHUNK_SIZE/2, 12, CHUNK_SIZE/2);
+
+        // --- Input Handling ---
+        const keys = {};
+        window.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+            if (['1','2','3','4'].includes(e.key)) {
+                activeBlock = parseInt(e.key);
+                document.getElementById('blockName').innerText = BLOCK_TYPES[activeBlock].name;
+            }
+        });
+        window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        const raycaster = new THREE.Raycaster();
+        window.addEventListener('mousedown', (e) => {
+            if (!controls.isLocked) return;
+            
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const intersects = raycaster.intersectObjects(scene.children);
+
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                const pos = intersect.object.position;
+
+                if (e.button === 0) { // Left Click: Break
+                    scene.remove(intersect.object);
+                    worldBlocks.delete(`${pos.x},${pos.y},${pos.z}`);
+                } else if (e.button === 2) { // Right Click: Place
+                    const normal = intersect.face.normal;
+                    const nx = pos.x + normal.x;
+                    const ny = pos.y + normal.y;
+                    const nz = pos.z + normal.z;
+                    addBlock(nx, ny, nz, activeBlock);
+                }
+            }
+        });
+        window.addEventListener('contextmenu', e => e.preventDefault());
+
+        // --- Physics & Loop ---
+        let velocityY = 0;
+        let canJump = false;
+
+        function checkCollision(pos) {
+            const x = Math.round(pos.x);
+            const y = Math.round(pos.y);
+            const z = Math.round(pos.z);
+            return worldBlocks.has(`${x},${y},${z}`);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (controls.isLocked) {
+                // Movement
+                const moveDir = new THREE.Vector3();
+                if (keys['KeyW']) moveDir.z -= 1;
+                if (keys['KeyS']) moveDir.z += 1;
+                if (keys['KeyA']) moveDir.x -= 1;
+                if (keys['KeyD']) moveDir.x += 1;
+                moveDir.normalize().applyQuaternion(camera.quaternion);
+                moveDir.y = 0;
+                camera.position.addScaledVector(moveDir, PLAYER_SPEED);
+
+                // Gravity & Jump
+                velocityY -= GRAVITY;
+                camera.position.y += velocityY;
+
+                // Simple Floor Collision
+                const footPos = camera.position.clone().subtractScalar(1.6); // Eye height offset
+                if (checkCollision(footPos)) {
+                    camera.position.y -= velocityY;
+                    velocityY = 0;
+                    canJump = true;
+                } else {
+                    canJump = false;
+                }
+
+                if (keys['Space'] && canJump) {
+                    velocityY = JUMP_FORCE;
+                    canJump = false;
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>

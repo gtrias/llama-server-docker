@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel World</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: sans-serif; }
+        canvas { display: block; }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%;
+            width: 20px; height: 20px;
+            border: 2px solid white; border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none; mix-blend-mode: difference;
+        }
+        #ui {
+            position: absolute; bottom: 20px; left: 20px;
+            color: white; background: rgba(0,0,0,0.5);
+            padding: 10px; border-radius: 5px; pointer-events: none;
+        }
+        #instructions {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: white; background: rgba(0,0,0,0.8);
+            padding: 20px; text-align: center; cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="crosshair"></div>
+    <div id="ui">Block: <span id="block-name">Grass</span> (1-4 to switch)</div>
+    <div id="instructions"><h1>Click to Play</h1><p>WASD: Move | Space: Jump | Left Click: Break | Right Click: Place</p></div>
+
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.170.0/build/three.module.js';
+
+        // --- CONFIG & CONSTANTS ---
+        const CHUNK_SIZE = 32;
+        const WORLD_HEIGHT = 10;
+        const PLAYER_HEIGHT = 1.8;
+        const PLAYER_RADIUS = 0.4;
+        const GRAVITY = 0.015;
+        const JUMP_FORCE = 0.25;
+        const MOVE_SPEED = 0.1;
+
+        const BLOCK_TYPES = {
+            1: { name: 'Grass', color: 0x4caf50 },
+            2: { name: 'Dirt', color: 0x8b4513 },
+            3: { name: 'Stone', color: 0x808080 },
+            4: { name: 'Wood', color: 0x5d4037 }
+        };
+
+        // --- NOISE FUNCTION (Simple Perlin-ish) ---
+        const lerp = (a, b, t) => a + (b - a) * t;
+        const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+        const grad = (hash, x, y, z) => {
+            const h = hash & 15;
+            const u = h < 8 ? x : y;
+            const v = h < 4 ? y : h === 12 || h === 14 ? x : z;
+            return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+        };
+        const p = new Uint8Array(512);
+        const permutation = new Uint8Array(256).map(() => Math.floor(Math.random() * 256));
+        for (let i = 0; i < 512; i++) p[i] = permutation[i & 255];
+
+        function noise(x, y, z) {
+            const X = Math.floor(x) & 255, Y = Math.floor(y) & 255, Z = Math.floor(z) & 255;
+            x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z);
+            const u = fade(x), v = fade(y), w = fade(z);
+            const A = p[X] + Y, AA = p[A] + Z, AB = p[A + 1] + Z, B = p[X + 1] + Y, BA = p[B] + Z, BB = p[B + 1] + Z;
+            return lerp(w, lerp(v, lerp(u, grad(p[AA], x, y, z), grad(p[BA], x - 1, y, z)),
+                lerp(u, grad(p[AB], x, y - 1, z), grad(p[BB], x - 1, y - 1, z))),
+                lerp(v, lerp(u, grad(p[AA + 1], x, y, z - 1), grad(p[BA + 1], x - 1, y, z - 1)),
+                lerp(u, grad(p[AB + 1], x, y - 1, z - 1), grad(p[BB + 1], x - 1, y - 1, z - 1))));
+        }
+
+        // --- ENGINE VARIABLES ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        sunLight.position.set(10, 20, 10);
+        scene.add(sunLight);
+
+        const voxels = new Map(); // Key: "x,y,z", Value: mesh
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        let activeBlockType = 1;
+
+        // --- WORLD GENERATION ---
+        function getVoxelKey(x, y, z) { return `${Math.round(x)},${Math.round(y)},${Math.round(z)}`; }
+
+        function addVoxel(x, y, z, type) {
+            const key = getVoxelKey(x, y, z);
+            if (voxels.has(key)) return;
+            const material = new THREE.MeshStandardMaterial({ color: BLOCK_TYPES[type].color });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, z);
+            mesh.userData = { type };
+            scene.add(mesh);
+            voxels.set(key, mesh);
+        }
+
+        function removeVoxel(x, y, z) {
+            const key = getVoxelKey(x, y, z);
+            if (voxels.has(key)) {
+                const mesh = voxels.get(key);
+                scene.remove(mesh);
+                voxels.delete(key);
+            }
+        }
+
+        for (let x = -CHUNK_SIZE/2; x < CHUNK_SIZE/2; x++) {
+            for (let z = -CHUNK_SIZE/2; z < CHUNK_SIZE/2; z++) {
+                const h = Math.floor(noise(x * 0.1, 0, z * 0.1) * 5 + 5);
+                for (let y = 0; y <= h; y++) {
+                    let type = 3; // Stone
+                    if (y === h) type = 1; // Grass
+                    else if (y > h - 3) type = 2; // Dirt
+                    addVoxel(x, y, z, type);
+                }
+            }
+        }
+
+        // --- PLAYER LOGIC ---
+        const player = {
+            pos: new THREE.Vector3(0, 15, 0),
+            vel: new THREE.Vector3(),
+            onGround: false,
+            input: { w: false, a: false, s: false, d: false, space: false }
+        };
+
+        // Pointer Lock
+        const instructions = document.getElementById('instructions');
+        instructions.addEventListener('click', () => {
+            document.body.requestPointerLock();
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            instructions.style.display = document.pointerLockElement ? 'none' : 'block';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement) {
+                camera.rotation.y -= e.movementX * 0.002;
+                camera.rotation.x -= e.movementY * 0.002;
+                camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
+            }
+        });
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyW') player.input.w = true;
+            if (e.code === 'KeyS') player.input.s = true;
+            if (e.code === 'KeyA') player.input.a = true;
+            if (e.code === 'KeyD') player.input.d = true;
+            if (e.code === 'Space') player.input.space = true;
+            if (['1', '2', '3', '4'].includes(e.key)) {
+                activeBlockType = parseInt(e.key);
+                document.getElementById('block-name').innerText = BLOCK_TYPES[activeBlockType].name;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'KeyW') player.input.w = false;
+            if (e.code === 'KeyS') player.input.s = false;
+            if (e.code === 'KeyA') player.input.a = false;
+            if (e.code === 'KeyD') player.input.d = false;
+            if (e.code === 'Space') player.input.space = false;
+        });
+
+        // --- INTERACTION ---
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2(0, 0);
+
+        window.addEventListener('mousedown', (e) => {
+            if (!document.pointerLockElement) return;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(Array.from(voxels.values()));
+
+            if (intersects.length > 0 && intersects[0].distance < 5) {
+                const intersect = intersects[0];
+                if (e.button === 0) { // Left Click: Break
+                    const p = intersect.object.position;
+                    removeVoxel(p.x, p.y, p.z);
+                } else if (e.button === 2) { // Right Click: Place
+                    const p = intersect.object.position.clone().add(intersect.face.normal);
+                    addVoxel(p.x, p.y, p.z, activeBlockType);
+                }
+            }
+        });
+        window.addEventListener('contextmenu', e => e.preventDefault());
+
+        // --- GAME LOOP ---
+        camera.rotation.order = 'YXZ';
+
+        function update() {
+            // Movement
+            const moveDir = new THREE.Vector3();
+            if (player.input.w) moveDir.z -= 1;
+            if (player.input.s) moveDir.z += 1;
+            if (player.input.a) moveDir.x -= 1;
+            if (player.input.d) moveDir.x += 1;
+            moveDir.normalize().applyQuaternion(camera.quaternion);
+            moveDir.y = 0;
+
+            player.vel.x = moveDir.x * MOVE_SPEED;
+            player.vel.z = moveDir.z * MOVE_SPEED;
+
+            // Gravity
+            player.vel.y -= GRAVITY;
+            if (player.input.space && player.onGround) {
+                player.vel.y = JUMP_FORCE;
+                player.onGround = false;
+            }
+
+            // Collision Detection (Simple)
+            const nextPos = player.pos.clone().add(player.vel);
+            
+            // Check Y collision (Floor)
+            player.onGround = false;
+            const floorCheck = getVoxelAt(player.pos.x, nextPos.y - PLAYER_HEIGHT, player.pos.z);
+            if (floorCheck !== null) {
+                player.vel.y = 0;
+                player.pos.y = floorCheck + 1 + PLAYER_HEIGHT;
+                player.onGround = true;
+            } else {
+                player.pos.y = nextPos.y;
+            }
+
+            // Check XZ collision
+            const sideCheck = getVoxelAt(nextPos.x, player.pos.y, player.pos.z) || 
+                             getVoxelAt(nextPos.x, player.pos.y, player.pos.z) ||
+                             getVoxelAt(player.pos.x, player.pos.y, nextPos.z);
+            
+            if (sideCheck === null) {
+                player.pos.x = nextPos.x;
+                player.pos.z = nextPos.z;
+            } else {
+                player.vel.x = 0;
+                player.vel.z = 0;
+            }
+
+            camera.position.copy(player.pos);
+        }
+
+        function getVoxelAt(x, y, z) {
+            const key = getVoxelKey(x, y, z);
+            return voxels.has(key) ? Math.round(y) : null;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            update();
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
