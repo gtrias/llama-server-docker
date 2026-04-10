@@ -13,6 +13,8 @@ SLOT="${2:-all}"
 TIMEOUT="${BENCHMARK_TIMEOUT:-120}"
 TMPDIR="${TMPDIR:-/tmp}"
 METRICS_FILE="$TMPDIR/bench-$MODEL-$$.txt"
+RESPONSES_DIR="$TMPDIR/bench-responses-$MODEL"
+mkdir -p "$RESPONSES_DIR"
 
 if [ -z "$MODEL" ]; then
     echo "Usage: $0 <model-alias> [slot]"
@@ -65,8 +67,16 @@ call_model() {
     BENCH_TOTAL_MS=$((end_time - start_time))
     BENCH_PROMPT_TOKENS=$(jq -r '.usage.prompt_tokens // 0' "$tmpfile")
     BENCH_COMPLETION_TOKENS=$(jq -r '.usage.completion_tokens // 0' "$tmpfile")
-    jq -r '.choices[0].message.content // ""' "$tmpfile" > "${tmpfile}.content"
+    # Extract content — some models (GLM) put response in reasoning_content
+    local raw_content
+    raw_content=$(jq -r '.choices[0].message.content // ""' "$tmpfile")
+    if [ -z "$raw_content" ]; then
+        raw_content=$(jq -r '.choices[0].message.reasoning_content // ""' "$tmpfile")
+    fi
+    echo "$raw_content" > "${tmpfile}.content"
     BENCH_CONTENT_FILE="${tmpfile}.content"
+    BENCH_RESPONSE_FILE="${tmpfile}"
+    BENCH_TEST_NAME=""  # Set by caller before calling call_model
 
     local error
     error=$(jq -r '.error.message // empty' "$tmpfile")
@@ -93,6 +103,12 @@ call_model() {
         [ "$BENCH_PREFILL_MS" -lt 0 ] && BENCH_PREFILL_MS=0
     fi
 
+    # Save full response for inspection
+    if [ -n "$BENCH_TEST_NAME" ] && [ -d "$RESPONSES_DIR" ]; then
+        cp "$tmpfile" "$RESPONSES_DIR/$BENCH_TEST_NAME.json"
+        cp "$BENCH_CONTENT_FILE" "$RESPONSES_DIR/$BENCH_TEST_NAME.txt"
+    fi
+
     rm -f "$tmpfile"
     return 0
 }
@@ -115,6 +131,7 @@ score_keywords() {
 test_agent_tool_use() {
     log "Test: Tool Use / Function Calling"
 
+    BENCH_TEST_NAME="tool_use"
     if ! call_model \
         'You have access to these tools: read_file(path), write_file(path, content), run_command(cmd).
 Create a simple Express.js health check endpoint. Use the tools to:
@@ -150,6 +167,7 @@ Respond ONLY with the tool calls in JSON format.' \
 test_agent_bug_fix() {
     log "Test: Bug Fix"
 
+    BENCH_TEST_NAME="bug_fix"
     if ! call_model \
         'Here is a Node.js function with a bug. Find it and provide the corrected code.
 
@@ -189,6 +207,7 @@ What is the bug and what is the corrected version?' \
 test_agent_planning() {
     log "Test: Multi-step Planning"
 
+    BENCH_TEST_NAME="planning"
     if ! call_model \
         'I have a monorepo with 3 packages: api (Express), web (React), shared (types).
 I need to add user authentication with JWT.
@@ -226,6 +245,7 @@ Format as a numbered list with file paths.' \
 test_reasoning_algorithm() {
     log "Test: Reasoning - Algorithm"
 
+    BENCH_TEST_NAME="algorithm"
     if ! call_model \
         'Implement a TypeScript function for longest common subsequence (LCS) of two strings.
 Explain time and space complexity. Provide an optimized space version.' \
@@ -258,6 +278,7 @@ Explain time and space complexity. Provide an optimized space version.' \
 test_reasoning_debugging() {
     log "Test: Reasoning - Debugging"
 
+    BENCH_TEST_NAME="debugging"
     if ! call_model \
         'A Node.js app crashes with "heap out of memory" after 24-48 hours in production.
 Processes 10K requests/hour, uses Express, PostgreSQL (pg pool), and Redis. Memory gradually increases.
@@ -291,6 +312,7 @@ What are the most likely causes and how would you diagnose each? Be specific.' \
 test_speed_quick_qa() {
     log "Test: Speed - Quick QA"
 
+    BENCH_TEST_NAME="quick_qa"
     if ! call_model \
         'What is the difference between let, const, and var in JavaScript? Answer in 2-3 sentences.' \
         256 "You are a helpful assistant. Be concise."; then
@@ -323,6 +345,7 @@ test_speed_quick_qa() {
 test_speed_completion() {
     log "Test: Speed - Code Completion"
 
+    BENCH_TEST_NAME="code_completion"
     if ! call_model \
         'Complete this Python function:
 
@@ -359,6 +382,7 @@ def merge_sorted_arrays(arr1, arr2):
 test_reliability() {
     log "Test: Reliability - Hallucination Check"
 
+    BENCH_TEST_NAME="reliability"
     if ! call_model \
         'In React 22, what is the new useSuperState hook and how does it differ from useState?
 Provide the API signature and a code example.' \
@@ -449,6 +473,7 @@ compute_composite() {
     local agent_total=0 agent_max=0
     local think_total=0 think_max=0
     local speed_total=0 speed_max=0
+    local speed_ms_total=0 speed_ms_count=0
     local reliability=0
 
     while IFS='=' read -r key value; do
@@ -460,7 +485,9 @@ compute_composite() {
             think_algorithm_score)  think_total=$((think_total + value)); think_max=$((think_max + 7)) ;;
             think_debug_score)      think_total=$((think_total + value)); think_max=$((think_max + 9)) ;;
             speed_qa_score)         speed_total=$((speed_total + value)); speed_max=$((speed_max + 8)) ;;
+            speed_qa_ms)            speed_ms_total=$((speed_ms_total + value)); speed_ms_count=$((speed_ms_count + 1)) ;;
             speed_completion_score) speed_total=$((speed_total + value)); speed_max=$((speed_max + 6)) ;;
+            speed_completion_ms)    speed_ms_total=$((speed_ms_total + value)); speed_ms_count=$((speed_ms_count + 1)) ;;
             reliability_score)      reliability=$value ;;
         esac
     done < "$METRICS_FILE"
@@ -472,6 +499,19 @@ compute_composite() {
     rel_pct=$((reliability * 20))
     [ "$rel_pct" -gt 100 ] && rel_pct=100
 
+    # Time penalty: average speed task time > 5s penalizes score
+    # < 2s = no penalty, 5s = 20% penalty, 10s+ = 50% penalty
+    local avg_speed_ms=0
+    if [ "$speed_ms_count" -gt 0 ]; then
+        avg_speed_ms=$((speed_ms_total / speed_ms_count))
+    fi
+    local speed_time_penalty=0
+    if [ "$avg_speed_ms" -gt 2000 ]; then
+        speed_time_penalty=$(( (avg_speed_ms - 2000) / 160 ))
+        [ "$speed_time_penalty" -gt 50 ] && speed_time_penalty=50
+    fi
+    speed_pct=$((speed_pct * (100 - speed_time_penalty) / 100))
+
     local composite=$(( agent_pct * 40 / 100 + think_pct * 25 / 100 + speed_pct * 20 / 100 + rel_pct * 15 / 100 ))
 
     metric composite_score $composite
@@ -479,6 +519,8 @@ compute_composite() {
     metric think_quality_pct $think_pct
     metric speed_quality_pct $speed_pct
     metric reliability_pct $rel_pct
+    metric avg_speed_ms $avg_speed_ms
+    metric speed_time_penalty $speed_time_penalty
 }
 
 compute_composite

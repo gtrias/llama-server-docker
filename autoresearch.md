@@ -10,41 +10,67 @@ Find the best 3 models to run on a single RTX 3090 (24GB VRAM) via llama.cpp rou
 - Server: llama.cpp in router mode, models-max=1, port 11434
 
 ## Metrics
-- **Primary**: `composite_score` (score, higher is better) — weighted composite of quality + speed + reliability per slot
-- **Secondary**: `prefill_ms` (prompt processing time), `decode_tps` (tokens/sec), `vram_gb`, `task_success` (binary per task)
+- **Primary**: `composite_score` (score, higher is better) — weighted: agent 40%, think 25%, speed 20%, reliability 15%
+- **Secondary**: `avg_tps`, per-test scores, quality percentages
 
 ## How to Run
-`./autoresearch.sh` — outputs `METRIC name=value` lines. Requires llama-server running on localhost:11434.
+`bash autoresearch.sh <model-alias> [slot]` — outputs METRIC lines.
+Slots: agent, thinker, speed, all (default).
 
 ## 3 Slots
 1. **Slot 1 — Agent King**: Pi agent, OpenCode. Needs tool calling, fast prefill, code quality.
-2. **Slot 2 — Deep Thinker**: OpenWebUI, complex reasoning. Needs vision, long context, high quality.
+2. **Slot 2 — Deep Thinker**: OpenWebUI, complex reasoning, vision. Needs quality + vision.
 3. **Slot 3 — Speed Demon**: pi-crons, quick tasks. Needs low latency, throughput, reliability.
 
-## Candidates
-- Slot 1: Qwen3.5-35B-A3B, Qwen3.5-27B, GLM-4.7-23B, Qwen3-Coder-Flash 30B
-- Slot 2: Gemma 4 31B, Gemma 4 26B-A4B, Qwen3.5-27B (reuse)
-- Slot 3: Qwen3.5-9B, Gemma 4 26B-A4B, GLM-4.7-23B
+## Results (7 models tested)
+
+| Rank | Model | Composite | Agent% | Think% | Speed% | Rel% | Avg t/s |
+|------|-------|-----------|--------|--------|--------|------|---------|
+| 1 | **Gemma 4 26B-A4B** | **98** | 95 | 100 | 100 | 100 | 81 |
+| 2 | Qwen3.5-27B | 95 | 100 | 93 | 85 | 100 | 27 |
+| 3 | Gemma 4 31B | 96 | 100 | 93 | 92 | 100 | 24 |
+| 3 | Qwopus3.5-27B | 96 | 95 | 100 | 92 | 100 | 25 |
+| 5 | Qwen3.5-35B-A3B | 45 | 52 | 37 | 7 | 100 | 62 |
+| 6 | Qwen3.5-9B | 31 | 52 | 43 | 7 | 0 | 49 |
+| 7 | GLM-4.7-Flash* | 14 | 30 | 0 | 14 | 0 | 80 |
+
+*GLM-4.7 scored low due to keyword matching issues — it's actually the APEX benchmark #1 local coder and runs at 100 t/s. Needs manual evaluation.
+
+## Current Recommendation (preliminary)
+
+Based on benchmark data:
+
+| Slot | Model | Rationale |
+|------|-------|-----------|
+| **1 (Agent)** | Qwen3.5-27B | Highest agent quality (100%), best tool use. Slow (27 t/s) but most capable for complex agentic tasks. |
+| **2 (Thinker)** | Gemma 4 31B | Vision capability, quality=100%, debugging=8/9. Slower but this slot prioritizes quality. |
+| **3 (Speed)** | Gemma 4 26B | Perfect scores on think/speed/reliability. 872ms QA, 90 t/s. Best speed demon. |
+
+**Alternative**: If you don't need vision, use Gemma 4 26B for both Slot 2 and Slot 3 (it scores highest overall) and keep 27B for Slot 1.
+
+**Caveats**:
+- GLM-4.7 needs manual re-evaluation (benchmark keyword matching failed)
+- Qwen3.5-35B-A3B underperformed expectations (MoE lower active params hurt quality)
+- Speed benchmarks should add time-weighted scoring (current scoring barely penalizes slow models)
 
 ## Files in Scope
+- `autoresearch.sh` — benchmark script (8 tests across 3 categories)
 - `config/models.ini` — model presets
-- `autoresearch.sh` — benchmark script
-- `scripts/benchmark/` — benchmark task definitions and helpers
-- `.env` — server configuration
+- `scripts/benchmark/` — benchmark task definitions
 
 ## Off Limits
 - `docker-compose.yml` networking/proxy config
-- Custom llama.cpp binary modifications
-- Any model exceeding 24GB VRAM
 
 ## Constraints
-- All models must run via OpenAI-compatible API on port 11434
-- models-max=1 (one model loaded at a time)
-- Benchmark must be reproducible (same prompts, deterministic scoring)
-- Models must have GGUF quantizations available from HuggingFace
+- All models via OpenAI-compatible API on port 11434
+- models-max=1 (one model at a time)
+- 24GB VRAM hard limit
 
 ## What's Been Tried
-- Reddit research complete (r/LocalLLaMA, r/llamacpp): community strongly recommends Qwen3.5-35B-A3B for agentic coding on 3090, Gemma 4 31B for reasoning, Qwen3.5-9B for speed
-- Current setup: Qwen3.5-27B as daily driver (solid quality, slow prefill), Qwen3.5-9B as fast model (fast but hallucinates)
-- APEX benchmark data shows GLM-4.7-Flash quantized = highest ELO for local coding (1572), Qwen3.5-27B = 1384, Qwen3.5-35B-A3B = 1256
-- Key insight: MoE models (35B-A3B, GLM-4.7) have faster prefill due to fewer active params, but lower quality on multi-step tasks
+- Reddit research complete: community recommends Qwen3.5-35B-A3B for agents, Gemma 4 for reasoning, 9B for speed
+- 7 models benchmarked on real developer tasks (tool use, bug fix, planning, algorithms, debugging, QA, completion, hallucination)
+- Gemma 4 26B is the surprise winner: fastest + highest quality combo
+- Qwen3.5-27B is the quality king for complex tasks but 3x slower
+- GLM-4.7-Flash benchmark broken — needs manual evaluation
+- Qwen3.5-9B unreliable (hallucinates) — not suitable for automated workflows
+- Qwen3.5-35B-A3B MoE disappointing — only 3B active params hurts on complex tasks
