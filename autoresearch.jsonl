@@ -1,1 +1,3 @@
 {"type":"config","name":"Review and update agents.md","metricName":"documentation_quality","metricUnit":"","bestDirection":"higher"}
+{"run":1,"commit":"507699f","metric":1,"metrics":{},"status":"keep","description":"Cleaned up AGENTS.md to remove global duplicates and added project-specific guidelines for llama-server-docker (VRAM awareness, config consistency, and validation workflow).","timestamp":1775803975272,"segment":0,"confidence":null,"iterationTokens":null}
+{"type":"config","name":"Optimal 3-Model Setup for Developer Workflow","metricName":"composite_score","metricUnit":"","bestDirection":"higher"}
