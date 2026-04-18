@@ -26,15 +26,16 @@ Find the best 3 models to run on a single RTX 3090 (24GB VRAM) via llama.cpp rou
 
 See `docs/plans/2026-04-10-optimal-3-model-setup-results.md` for full analysis.
 
-## All Results (11 runs, 7 models)
+## All Results (15 runs, 8 models)
 
 | Model | Composite | Agent% | Think% | Speed% | Rel% | Avg t/s |
-|-------|-----------|--------|--------|--------|------|---------|
+|-------|-----------|--------|--------|--------|------|--------|
 | GLM-4.7-Flash | 95 | 95 | 93 | 96 | 100 | 100 |
+| Qwopus3.5-27B | 96* | 95 | 100 | 92 | 100 | 26 |
+| **Qwen3.6-APEX** | **94** | **95** | **93** | **92** | **100** | **96** |
+| Gemma 4 31B | 95 | 100 | 100 | 79 | 100 | 25 |
 | Gemma 4 26B | 92 | 95 | 100 | 100 | 100 | 81 |
 | Qwen3.5-27B | 92 | 95 | 93 | 80 | 100 | 27 |
-| Gemma 4 31B | 95 | 100 | 100 | 79 | 100 | 25 |
-| Qwopus3.5-27B | 96* | 95 | 100 | 92 | 100 | 26 |
 | Qwen3.5-35B-A3B | 89 | 95 | 87 | 76 | 100 | 38 |
 | Qwen3.5-9B | 31 | 52 | 43 | 7 | 0 | 49 |
 
@@ -46,7 +47,9 @@ See `docs/plans/2026-04-10-optimal-3-model-setup-results.md` for full analysis.
 - Qwen3.5-35B-A3B MoE eliminated: slower AND lower quality than alternatives
 - Qwen3.5-9B eliminated: unreliable (hallucinates on fake prompts)
 - GLM-4.7 is the hidden gem: APEX #1 local coder, 100 t/s, matches Qwen quality
+- **Qwen3.6-APEX is the all-rounder**: 94 composite, 96 t/s, strong in every slot (95/93/92/100), zero speed penalty
 - Gemma 4 family dominates: both 26B and 31B outperform Qwen on speed+quality combo
+- Qwen3.6-APEX bridges the gap: Qwen quality + APEX speed (97-103 t/s on complex tasks)
 
 ## Files in Scope
 - `autoresearch.sh` — benchmark script (8 tests, ~55-150s per run)
