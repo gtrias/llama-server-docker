@@ -27,6 +27,9 @@ services:
 
     # Environment variables
     environment:
+      # Hugging Face credentials (for faster downloads)
+      - HF_TOKEN=${HF_TOKEN:-}
+
       # Server settings
       - LLAMA_ARG_HOST=0.0.0.0
       - LLAMA_ARG_PORT=8080
