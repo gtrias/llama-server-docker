@@ -106,10 +106,14 @@ fi
 
 # MTP speculative decoding (requires PR #22673 build)
 SPEC_TYPE=${LLAMA_ARG_SPEC_TYPE:-""}
-SPEC_DRAFT_N_MAX=${LLAMA_ARG_SPEC_DRAFT_N_MAX:-"3"}
+SPEC_DRAFT_N_MAX=${LLAMA_ARG_SPEC_DRAFT_N_MAX:-"6"}
+SPEC_DRAFT_P_MIN=${LLAMA_ARG_SPEC_DRAFT_P_MIN:-""}
 if [ -n "$SPEC_TYPE" ]; then
     CMD_ARGS+=("--spec-type" "$SPEC_TYPE" "--spec-draft-n-max" "$SPEC_DRAFT_N_MAX")
-    log_config "  Speculative decoding: $SPEC_TYPE (draft-n-max=$SPEC_DRAFT_N_MAX)"
+    if [ -n "$SPEC_DRAFT_P_MIN" ]; then
+        CMD_ARGS+=("--spec-draft-p-min" "$SPEC_DRAFT_P_MIN")
+    fi
+    log_config "  Speculative decoding: $SPEC_TYPE (draft-n-max=$SPEC_DRAFT_N_MAX, draft-p-min=${SPEC_DRAFT_P_MIN:-default})"
 fi
 
 # Start llama-server
