@@ -104,6 +104,14 @@ if [ "$JINJA" = "true" ]; then
     CMD_ARGS+=("--jinja")
 fi
 
+# MTP speculative decoding (requires PR #22673 build)
+SPEC_TYPE=${LLAMA_ARG_SPEC_TYPE:-""}
+SPEC_DRAFT_N_MAX=${LLAMA_ARG_SPEC_DRAFT_N_MAX:-"3"}
+if [ -n "$SPEC_TYPE" ]; then
+    CMD_ARGS+=("--spec-type" "$SPEC_TYPE" "--spec-draft-n-max" "$SPEC_DRAFT_N_MAX")
+    log_config "  Speculative decoding: $SPEC_TYPE (draft-n-max=$SPEC_DRAFT_N_MAX)"
+fi
+
 # Start llama-server
 log_info "Initializing llama-server..."
 exec "$CMD" "${CMD_ARGS[@]}"

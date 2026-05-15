@@ -1,0 +1,66 @@
+# Dockerfile for llama.cpp server with MTP support (PR #22673)
+# Builds from source with the MTP patch merged on top of master
+
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04 AS build
+
+RUN apt-get update && apt-get install -y \
+    gcc-14 g++-14 build-essential cmake git libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CC=gcc-14 CXX=g++-14 CUDAHOSTCXX=g++-14
+
+WORKDIR /build
+
+RUN git clone https://github.com/ggml-org/llama.cpp.git . \
+    && git config user.email "build@local" \
+    && git config user.name "build" \
+    && git fetch origin pull/22673/head:pr-22673 \
+    && (git merge --no-ff pr-22673 -m "Merge PR #22673: MTP Support" \
+        || (git checkout --theirs convert_hf_to_gguf.py tests/test-backend-ops.cpp \
+            && git add convert_hf_to_gguf.py tests/test-backend-ops.cpp \
+            && git commit -m "Merge PR #22673: MTP Support (conflicts resolved)"))
+
+RUN cmake -B build \
+    -DGGML_NATIVE=OFF \
+    -DGGML_CUDA=ON \
+    -DGGML_BACKEND_DL=ON \
+    -DGGML_CPU_ALL_VARIANTS=ON \
+    -DLLAMA_BUILD_TESTS=OFF \
+    -DLLAMA_CURL=OFF \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined \
+    && cmake --build build --config Release --target llama-server -j$(nproc)
+
+RUN mkdir -p /app/lib && \
+    find build -name "*.so*" -exec cp -P {} /app/lib \;
+
+# Runtime stage
+FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04
+
+RUN apt-get update && apt-get install -y \
+    curl wget jq python3 python3-pip libgomp1 \
+    && pip3 install --break-system-packages huggingface-hub \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /models /cache
+
+WORKDIR /app
+
+COPY --from=build /app/lib/ /app/
+COPY --from=build /build/build/bin/llama-server /app/llama-server
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+COPY config/ /app/config/
+COPY scripts/ /app/scripts/
+
+ENV LLAMA_ARG_HOST=0.0.0.0
+ENV LLAMA_ARG_PORT=8080
+ENV LLAMA_ARG_JINJA=true
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD []

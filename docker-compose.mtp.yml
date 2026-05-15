@@ -1,0 +1,9 @@
+version: '3.8'
+
+# Override for MTP speculative decoding (use with: docker compose -f docker-compose.yml -f docker-compose.mtp.yml up)
+services:
+  llama-server:
+    image: llama-server:mtp
+    environment:
+      - LLAMA_ARG_SPEC_TYPE=mtp
+      - LLAMA_ARG_SPEC_DRAFT_N_MAX=3
