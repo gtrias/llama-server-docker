@@ -1,5 +1,6 @@
-# Dockerfile for llama.cpp server with MTP support (PR #22673)
-# Builds from source with the MTP patch merged on top of master
+# Dockerfile for llama.cpp server with MTP support
+# As of 2026-05-16 MTP is merged upstream (commit 2555826), so we simply
+# build from current master — no out-of-tree PR merge needed.
 
 FROM nvidia/cuda:12.8.1-devel-ubuntu24.04 AS build
 
@@ -11,14 +12,7 @@ ENV CC=gcc-14 CXX=g++-14 CUDAHOSTCXX=g++-14
 
 WORKDIR /build
 
-RUN git clone https://github.com/ggml-org/llama.cpp.git . \
-    && git config user.email "build@local" \
-    && git config user.name "build" \
-    && git fetch origin pull/22673/head:pr-22673 \
-    && (git merge --no-ff pr-22673 -m "Merge PR #22673: MTP Support" \
-        || (git checkout --theirs convert_hf_to_gguf.py tests/test-backend-ops.cpp \
-            && git add convert_hf_to_gguf.py tests/test-backend-ops.cpp \
-            && git commit -m "Merge PR #22673: MTP Support (conflicts resolved)"))
+RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp.git .
 
 RUN cmake -B build \
     -DGGML_NATIVE=OFF \
