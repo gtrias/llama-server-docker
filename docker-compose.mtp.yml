@@ -1,12 +1,9 @@
-version: '3.8'
-
-# Override for MTP speculative decoding (use with: docker compose -f docker-compose.yml -f docker-compose.mtp.yml up)
-# Settings match the r/unsloth 2026-05 recipe: draft-mtp + n-max=6 + p-min=0.75 → ~1.8x speedup.
-# To restore previous behavior, set LLAMA_ARG_SPEC_DRAFT_P_MIN=0.0
+# Override for the MTP-capable image build.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.mtp.yml up
+#
+# MTP-specific flags (spec-type, spec-draft-*) live per-preset in
+# config/models.ini so they only apply to MTP-capable models. Other
+# presets in the same file spawn without these flags and load fine.
 services:
   llama-server:
     image: llama-server:mtp
-    environment:
-      - LLAMA_ARG_SPEC_TYPE=draft-mtp
-      - LLAMA_ARG_SPEC_DRAFT_N_MAX=6
-      - LLAMA_ARG_SPEC_DRAFT_P_MIN=0.75
