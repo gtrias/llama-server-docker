@@ -33,7 +33,7 @@ echo "Configured Models:"
 echo "=================="
 echo ""
 
-for alias in qwen-code qwen35 glm; do
+for alias in qwen-code qwen36-apex glm; do
     status=$(echo "$models_json" | jq -r ".data[]? | select(.id == \"$alias\") | .status.value" || echo "not found")
     
     case "$status" in

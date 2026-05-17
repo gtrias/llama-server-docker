@@ -13,9 +13,9 @@ if [ -z "$alias" ]; then
     echo "Usage: $0 <alias>"
     echo ""
     echo "Available aliases:"
-    echo "  qwen-code - Qwen3 Coder Next"
-    echo "  qwen35    - Qwen3.5 35B A3B (Q4_K_M)"
-    echo "  glm       - GLM-4.7 Flash REAP"
+    echo "  qwen-code   - Qwen3 Coder Next"
+    echo "  qwen36-apex - Qwen3.6 35B A3B APEX (I-Compact)"
+    echo "  glm         - GLM-4.7 Flash REAP"
     exit 1
 fi
 

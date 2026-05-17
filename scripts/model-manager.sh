@@ -110,7 +110,7 @@ show_status() {
     echo -e "${BLUE}=== Model Status ($(date)) ===${NC}"
     echo ""
 
-    for alias in qwen-code qwen35 glm; do
+    for alias in qwen-code qwen36-apex glm; do
         loaded=$(is_model_loaded "$alias")
 
         echo -n "${alias}: "
