@@ -47,6 +47,14 @@ services:
       - LLAMA_ARG_PARALLEL=2
       - LLAMA_ARG_KV_UNIFIED=1
 
+      # HTTP read/write timeout. llama.cpp default is 600s; the
+      # entrypoint defaults to 120s, which is too short for a cold
+      # DeltaNet replay (~180s for a near-full 131k context). 600s
+      # lets the slow turn complete instead of being killed by
+      # should_stop (PR #22907), avoiding the "Pi errors → user
+      # types continue → another full reprocess" recovery loop.
+      - LLAMA_ARG_TIMEOUT=600
+
     ports:
       - "11434:8080"  # Keep your existing port 11434
 
