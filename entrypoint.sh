@@ -106,7 +106,7 @@ if [ "$JINJA" = "true" ]; then
     CMD_ARGS+=("--jinja")
 fi
 
-# MTP speculative decoding (requires PR #22673 build)
+# MTP speculative decoding (upstream in llama.cpp master since 2026-05-16)
 SPEC_TYPE=${LLAMA_ARG_SPEC_TYPE:-""}
 SPEC_DRAFT_N_MAX=${LLAMA_ARG_SPEC_DRAFT_N_MAX:-"6"}
 SPEC_DRAFT_P_MIN=${LLAMA_ARG_SPEC_DRAFT_P_MIN:-""}
