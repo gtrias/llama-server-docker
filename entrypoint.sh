@@ -27,8 +27,8 @@ MODELS_PRESET=${LLAMA_ARG_MODELS_PRESET:-"/config/models.ini"}
 MODELS_MAX=${LLAMA_ARG_MODELS_MAX:-"4"}
 MODELS_AUTOLOAD=${LLAMA_ARG_MODELS_AUTOLOAD:-"true"}
 NGP_LAYERS=${LLAMA_ARG_N_GPU_LAYERS:-"-1"}
+CACHE_RAM=${LLAMA_ARG_CACHE_RAM:-"32768"}
 FLASH_ATTN=${LLAMA_ARG_FLASH_ATTN:-"on"}
-JINJA=${LLAMA_ARG_JINJA:-"true"}
 
 # Display configuration
 log_info "Starting llama-server in router mode..."
@@ -38,6 +38,7 @@ log_config "  Max models: $MODELS_MAX"
 log_config "  Auto-load: $MODELS_AUTOLOAD"
 log_config "  GPU layers: $NGP_LAYERS (-1 = all)"
 log_config "  Flash attention: $FLASH_ATTN"
+log_config "  Prompt cache RAM: ${CACHE_RAM} MiB"
 log_config "  Timeout: ${LLAMA_ARG_TIMEOUT:-120}s"
 
 if [ -n "$MODELS_DIR" ]; then
@@ -88,6 +89,7 @@ CMD_ARGS=(
     "--models-autoload"
     "--n-gpu-layers" "$NGP_LAYERS"
     "--timeout" "$TIMEOUT"
+    "--cache-ram" "$CACHE_RAM"
 )
 
 # Optional directory discovery
