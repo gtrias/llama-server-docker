@@ -3,7 +3,7 @@
 # llama-server Docker Entrypoint
 # Uses router mode with curated model presets
 
-set -e
+set -o pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -118,6 +118,10 @@ if [ -n "$SPEC_TYPE" ]; then
     log_config "  Speculative decoding: $SPEC_TYPE (draft-n-max=$SPEC_DRAFT_N_MAX, draft-p-min=${SPEC_DRAFT_P_MIN:-default})"
 fi
 
-# Start llama-server
+# Start llama-server with stdout+stderr going to both Docker and log file.
+# Redirect fds first, then exec replaces PID 1 with llama-server.
 log_info "Initializing llama-server..."
+LOG_FILE="/app/logs/llama-server.log"
+: > "$LOG_FILE"
+exec > >(tee -a "$LOG_FILE") 2>&1
 exec "$CMD" "${CMD_ARGS[@]}"
